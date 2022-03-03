@@ -62,7 +62,7 @@ class MPODApalisChannel(BaseInterface, Device):
         """
         max_voltage = self.max_voltage.get()
 
-        if voltage_number <= max_voltage:
+        if abs(voltage_number) <= abs(max_voltage):
             self.voltage.put(voltage_number)
         else:
             self.voltage.put(max_voltage)
@@ -80,7 +80,7 @@ class MPODApalisChannel(BaseInterface, Device):
 
         max_current = self.max_current.get()
 
-        if current_number <= max_current:
+        if abs(current_number) <= abs(max_current):
             self.current.put(current_number)
         else:
             self.current.put(max_current)
@@ -280,7 +280,7 @@ class MPODApalisCrate(BaseInterface, Device):
                 doc='Crate power status and control')
 
     tab_component_names = True
-    tab_whitelist = ['power']
+    tab_whitelist = ['power_cycle']
 
     def power_cycle(self):
         """
