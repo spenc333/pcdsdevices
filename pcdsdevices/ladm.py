@@ -119,28 +119,16 @@ class LADM(BaseInterface, GroupDevice):
                 "z": z_us
              }
 
-    def __init__(self):#, x1=x1_us, y1=y1_us, x2=x2_ds, y2=y2_ds, z=z_us, theta_pv=theta_pv, gamma_pv=gamma_pv):
-#        self.x1 = x1 #EpicsMotors
-#        self.x2 = x2
-#        self.y1 = y1
-#        self.y2 = y2
-#        self.z = z
+    def __init__(self, *args, **kwargs):
+
         self.theta = None #VirtualMotor
         self.XT = None #VirtualMotor
         self.gamma = None
         self.__lowlimX = None
         self.__hilimX = None
-#        self.motors = {
-#            "x1": x1_us,
-#            "y1": y1_us,
-#            "x2": x2_ds,
-#            "y2": y2_ds,
-#            "z": z_us
-#            }
-#        self._theta_pv = theta_pv #EpicsSignal
-#        self._gamma_pv = gamma_pv #EpicsSignal
+        super().__init__(*args, **kwargs)
 
-        super().__init__(self, LADM, prefix=prefix, name=name)
+
     def __theta_movement(self, theta, samz_offset=0):
         x1, x2, z = ThetaToMotors(theta, samz_offset)
         z_now = z_us.wm()
