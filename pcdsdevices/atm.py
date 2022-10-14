@@ -43,6 +43,44 @@ class ArrivalTimeMonitor(BaseInterface, GroupDevice, LightpathInOutMixin):
                         doc='First thermocouple.')
 
 
+class TM1K4Target(ATMTarget):
+    """
+    Controls TM1K4's states, and ATM in TMO.
+
+    Defines the state count as 8 (OUT and 7 targets), two more than the
+    standard ATM.
+    """
+    config = UpCpt(state_count=8)
+
+
+class TM1K4(ArrivalTimeMonitor):
+    """
+    An ATM in TMO that has two extra target states.
+    """
+
+    target = Cpt(TM1K4Target, ':MMS:STATE', kind='hinted',
+                 doc='Control of the diagnostic stack via saved positions.')
+
+
+class TM2K4Target(ATMTarget):
+    """
+    Controls TM2K4's states, an ATM in TMO.
+
+    Defines the state count as 5 (OUT and 4 targets), one less than the
+    standard ATM.
+    """
+    config = UpCpt(state_count=5)
+
+
+class TM2K4(ArrivalTimeMonitor):
+    """
+    An ATM in TMO that has one fewer target state.
+    """
+
+    target = Cpt(TM2K4Target, ':MMS:STATE', kind='hinted',
+                 doc='Control of the diagnostic stack via saved positions.')
+
+
 class TM2K2Target(ATMTarget):
     """
     Controls TM2K2's states, an ATM in RIX.

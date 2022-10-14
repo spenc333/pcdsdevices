@@ -5,13 +5,16 @@ import functools
 import logging
 import numbers
 import re
+import shutil
 import signal
+import subprocess
 import time
 import typing
 from contextlib import contextmanager
 from pathlib import Path
 from threading import Event
 from types import MethodType, SimpleNamespace
+from typing import Optional
 from weakref import WeakSet
 
 import ophyd
@@ -21,7 +24,6 @@ from ophyd.device import Device
 from ophyd.ophydobj import Kind, OphydObject
 from ophyd.positioner import PositionerBase
 from ophyd.signal import AttributeSignal, Signal
-from ophyd.status import Status
 
 from . import utils
 from .signal import NotImplementedSignal
@@ -30,6 +32,12 @@ try:
     import fcntl
 except ImportError:
     fcntl = None
+
+try:
+    from elog.utils import get_primary_elog
+    has_elog = True
+except ImportError:
+    has_elog = False
 
 logger = logging.getLogger(__name__)
 engineering_mode = True
@@ -358,6 +366,45 @@ class BaseInterface:
 
         return ophydobj_info(self, subdevice_filter=subdevice_filter)
 
+    def post_elog_status(self):
+        """
+        Post device status to the primary elog, if possible.
+        """
+        if not has_elog:
+            logger.info('No primary elog found, cannot post status.')
+            return
+
+        try:
+            elog = get_primary_elog()
+        except ValueError:
+            logger.info('elog exists but has not been registered')
+            return
+
+        final_post = f'<pre>{self.status()}</pre>'
+        elog.post(final_post, tags=['ophyd_status'],
+                  title=f'{self.name} status report')
+
+    def screen(self):
+        """
+        Open a screen for controlling the device.
+
+        Default behavior is the typhos screen, but this method can
+        be overridden for more specialized screens.
+        """
+
+        if shutil.which('typhos') is None:
+            logger.error('typhos is not installed, ',
+                         'screen cannot be opened')
+            return
+
+        arglist = ['typhos', f'{self.name}']
+        logger.info(f'Opening typhos screen for {self.name}...')
+
+        # capture stdout and stderr
+        subprocess.Popen(arglist,
+                         stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL)
+
 
 def get_name(obj, default):
     try:
@@ -549,11 +596,12 @@ class MvInterface(BaseInterface):
     """
 
     tab_whitelist = ["mv", "wm", "wm_update"]
+    _last_status: Optional[ophyd.status.MoveStatus]
+    _mov_ev: Event
 
     def __init__(self, *args, **kwargs):
         self._mov_ev = Event()
-        self._last_status = Status()
-        self._last_status.set_finished()
+        self._last_status = None
         super().__init__(*args, **kwargs)
 
     def _log_move_limit_error(self, position, ex):
@@ -583,6 +631,8 @@ class MvInterface(BaseInterface):
         return st
 
     def wait(self, timeout=None):
+        if self._last_status is None:
+            return
         self._last_status.wait(timeout=timeout)
 
     def mv(self, position, timeout=None, wait=False, log=True):
@@ -817,16 +867,21 @@ class FltMvInterface(MvInterface):
         except ophyd.utils.LimitError:
             return
 
-    def tweak(self):
+    def tweak(self, scale=0.1):
         """
         Control this motor using the arrow keys.
 
         Use left arrow to step negative and right arrow to step positive.
         Use up arrow to increase step size and down arrow to decrease step
         size. Press q or ctrl+c to quit.
+
+        Parameters
+        ----------
+        scale : float
+            starting step size, default = 0.1
         """
 
-        return tweak_base(self)
+        return tweak_base(self, scale=scale)
 
     def set_position(self, position):
         """
@@ -1326,7 +1381,7 @@ class PresetPosition:
         return str(self.pos)
 
 
-def tweak_base(*args):
+def tweak_base(*args, scale=0.1):
     """
     Base function to control motors with the arrow keys.
 
@@ -1337,7 +1392,8 @@ def tweak_base(*args):
 
     The scale for the tweak can be doubled by pressing + and halved by pressing
     -. Shift+up and shift+down can also be used, and the up and down keys will
-    also adjust the scaling in one motor mode.
+    also adjust the scaling in one motor mode. The starting scale can be set
+    with the keyword argument `scale`.
 
     Ctrl+c will stop an ongoing move during a tweak without exiting the tweak.
     Both q and ctrl+c will quit the tweak between moves.
@@ -1351,7 +1407,6 @@ def tweak_base(*args):
     shift_down = utils.shift_arrow_down
     plus = utils.plus
     minus = utils.minus
-    scale = 0.1
     abs_status = '{}: {:.4f}'
     exp_status = '{}: {:.4e}'
 

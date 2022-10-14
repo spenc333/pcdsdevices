@@ -2,8 +2,8 @@
 Module for LCLS's special motor records.
 """
 import logging
-import os
 import shutil
+import subprocess
 from typing import ClassVar, Optional
 
 from ophyd.device import Component as Cpt
@@ -531,7 +531,11 @@ class PCDSMotorBase(EpicsMotorInterface):
                          executable)
             return
         arg = self.prefix
-        os.system(executable + ' ' + arg)
+
+        logger.info(f'Opening {executable} for {self.name}...')
+        subprocess.run([executable, arg],
+                       stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL)
 
     @raise_if_disconnected
     def set_current_position(self, pos):
@@ -591,10 +595,6 @@ class IMS(PCDSMotorBase):
     _pm = None
     # If we fail to create _pm, set bool to only try once
     _pm_init_error = False
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._setup_pmgr_if_needed()
 
     def stage(self):
         """
@@ -720,7 +720,7 @@ class IMS(PCDSMotorBase):
 
         Returns nothing.
         """
-        self.check_pmgr()
+        self._setup_and_check_pmgr()
         self._pm.apply_config(self.prefix, cfgname)
 
     def get_configuration(self):
@@ -730,7 +730,7 @@ class IMS(PCDSMotorBase):
         Returns the current configuration name as a string or throws an
         exception.
         """
-        self.check_pmgr()
+        self._setup_and_check_pmgr()
         return self._pm.get_config(self.prefix)
 
     @staticmethod
@@ -766,7 +766,7 @@ class IMS(PCDSMotorBase):
                 print("    %s" % m)
 
     @staticmethod
-    def _setup_pmgr():
+    def setup_pmgr():
         try:
             from pmgr import pmgrAPI
         except ImportError:
@@ -791,10 +791,12 @@ class IMS(PCDSMotorBase):
     @staticmethod
     def _setup_pmgr_if_needed():
         if IMS._pm is None and not IMS._pm_init_error:
-            IMS._setup_pmgr()
+            IMS.setup_pmgr()
 
     @staticmethod
     def check_pmgr():
+        if IMS._pm is None:
+            raise RuntimeError('pmgr has not been set up yet, call setup_pmgr')
         if IMS._pm_init_error:
             raise RuntimeError('pmgr not available, initialized with an error')
 
@@ -954,7 +956,7 @@ class BeckhoffAxisPLC(Device):
                  string=True, doc='PLC error or warning')
     err_code = Cpt(PytmcSignal, 'nErrorId', io='i', kind='normal',
                    doc='Current NC error code')
-    cmd_err_reset = Cpt(PytmcSignal, 'bReset', io='o', kind='normal',
+    cmd_err_reset = Cpt(EpicsSignal, 'bReset', kind='normal',
                         doc='Command to reset an active error')
     cmd_home = Cpt(PytmcSignal, 'bHomeCmd', io='o', kind='normal',
                    doc='Start TwinCAT homing routine.')

@@ -22,7 +22,7 @@ from .inout import InOutRecordPositioner
 from .interface import BaseInterface, FltMvInterface
 from .pmps import TwinCATStatePMPS
 from .signal import PytmcSignal
-from .utils import get_status_value
+from .utils import get_status_value, reorder_components
 
 logger = logging.getLogger(__name__)
 
@@ -199,7 +199,8 @@ class OffsetMirror(BaseInterface, GroupDevice):
     # Subscription types
     SUB_STATE = 'state'
 
-    tab_whitelist = ['pitch', 'xgantry', 'ygantry']
+    # Tab config: show components
+    tab_component_names = True
 
     def __init__(self, prefix, *, prefix_xy=None,
                  xgantry_prefix=None, **kwargs):
@@ -389,6 +390,9 @@ class XOffsetMirror(BaseInterface, GroupDevice):
     transmission = 1
     SUB_STATE = 'state'
 
+    # Tab config: show components
+    tab_component_names = True
+
     def format_status_info(self, status_info):
         """
         Override status info handler to render the Hard X-ray Offset Mirror.
@@ -455,6 +459,28 @@ pitch: ({self.pitch.prefix})
 """
 
 
+class XOffsetMirrorRTDs(XOffsetMirror):
+    """
+    X-ray Offset Mirror.
+
+    1st and 2nd gen Axilon designs with LCLS-II Beckhoff motion architecture.
+
+    With 3 RTD sensors installed.
+
+    Parameters
+    ----------
+    prefix : str
+        Base PV for the mirror.
+
+    name : str
+        Alias for the device.
+    """
+    # RTD Cpts:
+    rtd_1 = Cpt(PytmcSignal, ':RTD:1', io='i', kind='normal')
+    rtd_2 = Cpt(PytmcSignal, ':RTD:2', io='i', kind='normal')
+    rtd_3 = Cpt(PytmcSignal, ':RTD:3', io='i', kind='normal')
+
+
 class XOffsetMirrorBend(XOffsetMirror):
     """
     X-ray Offset Mirror with 2 bender acutators.
@@ -490,6 +516,9 @@ class XOffsetMirrorBend(XOffsetMirror):
     us_rtd = Cpt(EpicsSignalRO, ':RTD:US:1_RBV', kind='normal')
     ds_rtd = Cpt(EpicsSignalRO, ':RTD:DS:1_RBV', kind='normal')
 
+    # Tab config: show components
+    tab_component_names = True
+
 
 # Maintain backward compatibility
 XOffsetMirror2 = XOffsetMirrorBend
@@ -523,6 +552,9 @@ class XOffsetMirrorSwitch(XOffsetMirror):
                  doc='Yleft master axis [um]')
     y_right = Cpt(BeckhoffAxisNoOffset, ':MMS:YRIGHT', kind='config',
                   doc='Yright slave axis [um]')
+
+    # Tab config: show components
+    tab_component_names = True
 
 
 class KBOMirror(BaseInterface, GroupDevice):
@@ -567,6 +599,9 @@ class KBOMirror(BaseInterface, GroupDevice):
     removed = False
     transmission = 1
     SUB_STATE = 'state'
+
+    # Tab config: show components
+    tab_component_names = True
 
     def format_status_info(self, status_info):
         """
@@ -696,6 +731,9 @@ class KBOMirrorHE(KBOMirror):
     cool_flow2 = Cpt(EpicsSignalRO, ':FLOW:2_RBV', kind='normal')
     cool_press = Cpt(EpicsSignalRO, ':PRESS:1_RBV', kind='normal')
 
+    # Tab config: show components
+    tab_component_names = True
+
 
 class FFMirror(BaseInterface, GroupDevice):
     """
@@ -729,6 +767,9 @@ class FFMirror(BaseInterface, GroupDevice):
     removed = False
     transmission = 1
     SUB_STATE = 'state'
+
+    # Tab config: show components
+    tab_component_names = True
 
     def format_status_info(self, status_info):
         """
@@ -796,6 +837,30 @@ pitch: ({self.pitch.prefix})
 """
 
 
+@reorder_components(
+    end_with=['x_enc_rms', 'y_enc_rms', 'z_enc_rms', 'pitch_enc_rms']
+)
+class FFMirrorZ(FFMirror):
+    """
+    Fixed Focus Kirkpatrick-Baez Mirror with Z axis.
+
+    1st gen Toyama designs with LCLS-II Beckhoff motion architecture.
+
+    Parameters
+    ----------
+    prefix : str
+        Base PV for the mirror.
+
+    name : str
+        Alias for the device.
+    """
+    # Motor components: can read/write positions
+    z = Cpt(BeckhoffAxisNoOffset, ':MMS:Z', kind='hinted')
+
+    # RMS Cpts:
+    z_enc_rms = Cpt(PytmcSignal, ':ENC:Z:RMS', io='i', kind='normal')
+
+
 class TwinCATMirrorStripe(TwinCATStatePMPS):
     """
     Subclass of TwinCATStatePMPS for the mirror coatings.
@@ -817,6 +882,62 @@ class TwinCATMirrorStripe(TwinCATStatePMPS):
     def transmission(self):
         """The mirror coating never blocks the beam."""
         return 1
+
+
+@reorder_components(
+    end_with=[
+        'coating', 'x', 'y', 'pitch', 'bender_us', 'bender_ds',
+        'x_enc_rms', 'y_enc_rms', 'pitch_enc_rms', 'bender_us_enc_rms',
+        'bender_ds_enc_rms', 'us_rtd', 'ds_rtd'
+    ]
+)
+class KBOMirrorStates(KBOMirror):
+    """
+    Kirkpatrick-Baez Mirror with Bender Axes and Coating States.
+
+    1st gen Toyama designs with LCLS-II Beckhoff motion architecture.
+
+    Parameters
+    ----------
+    prefix : str
+        Base PV for the mirror.
+
+    name : str
+        Alias for the device.
+    """
+    coating = Cpt(TwinCATMirrorStripe, ':COATING:STATE', kind='hinted',
+                  doc='Control of the coating states via saved positions.')
+
+    # Tab config: show components
+    tab_component_names = True
+
+
+@reorder_components(
+    end_with=[
+        'coating', 'x', 'y', 'pitch', 'bender_us', 'bender_ds',
+        'x_enc_rms', 'y_enc_rms', 'pitch_enc_rms', 'bender_us_enc_rms',
+        'bender_ds_enc_rms', 'us_rtd', 'ds_rtd', 'cool_flow1',
+        'cool_flow2', 'cool_press'
+    ]
+)
+class KBOMirrorHEStates(KBOMirrorHE):
+    """
+    Kirkpatrick-Baez Mirror with Bender Axes and Cooling and Coating States.
+
+    1st gen Toyama designs with LCLS-II Beckhoff motion architecture.
+
+    Parameters
+    ----------
+    prefix : str
+        Base PV for the mirror.
+
+    name : str
+        Alias for the device.
+    """
+    coating = Cpt(TwinCATMirrorStripe, ':COATING:STATE', kind='hinted',
+                  doc='Control of the coating states via saved positions.')
+    # Tab config: show components
+    tab_component_names = True
 
 
 class CoatingState(Device):
@@ -847,3 +968,31 @@ class XOffsetMirrorState(XOffsetMirror, CoatingState):
     """
     # UI representation
     _icon = 'fa.minus-square'
+
+
+class OpticsPitchNotepad(BaseInterface, Device):
+    """
+    class for storing pitch positions based on state
+
+    This provides an interface to the optics notepad IOC where
+    the X-Ray beam delivery team can store
+    pitch set points based on coating state.
+
+    """
+    mr1l0_pitch_b4c = Cpt(EpicsSignal, 'MR1L0:PITCH:Coating1')
+    mr1l0_pitch_ni = Cpt(EpicsSignal, 'MR1L0:PITCH:Coating2')
+
+    mr2l0_pitch_b4c = Cpt(EpicsSignal, 'MR2L0:PITCH:Coating1')
+    mr2l0_pitch_ni = Cpt(EpicsSignal, 'MR2L0:PITCH:Coating2')
+
+    mr1l4_pitch_mec_sic = Cpt(EpicsSignal, 'MR1L4:PITCH:MEC:Coating1')
+    mr1l4_pitch_mec_w = Cpt(EpicsSignal, 'MR1L4:PITCH:MEC:Coating2')
+
+    mr1l4_pitch_mfx_sic = Cpt(EpicsSignal, 'MR1L4:PITCH:MFX:Coating1')
+    mr1l4_pitch_mfx_w = Cpt(EpicsSignal, 'MR1L4:PITCH:MFX:Coating2')
+
+    mr1l3_pitch_sic = Cpt(EpicsSignal, 'MR1L3:PITCH:Coating1')
+    mr1l3_pitch_w = Cpt(EpicsSignal, 'MR1L3:PITCH:Coating2')
+
+    mr2l3_pitch_sic = Cpt(EpicsSignal, 'MR2L3:PITCH:Coating1')
+    mr2l3_pitch_w = Cpt(EpicsSignal, 'MR2L3:PITCH:Coating2')

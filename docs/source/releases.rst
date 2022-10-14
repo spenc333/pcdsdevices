@@ -1,6 +1,251 @@
 Release History
 ###############
 
+v6.3.0 (2022-07-27)
+===================
+
+Features
+--------
+- Add new module for controlling intensity of LEDs or Fiber-Lites, ``light_control.py``.
+  CvmiLed from cvmi_motion.py has been moved to this new module and renamed to ``LightControl``.
+
+Device Updates
+--------------
+- ``TM2K4`` now has its own class with 5 position states (4 targets and and OUT state)
+- Upgrade ``BeamEnergyRequest`` from ``BaseInterface`` to ``FltMvInterface``
+  to pick up all the move aliases.
+- slits.py: add 'hg', 'ho', 'vg', 'vo' to tab_whitelist in ``SlitsBase``, upon request from the XPP scientists
+- New ``set_zero`` method to ``DelayBase``
+
+New Devices
+-----------
+- ``UsDigitalUsbEncoder`` in ``pcdsdevices.usb_encoder``.
+  This is the EPICS interface for configuring the scale/offset of these encoders that are used in the DAQ.
+
+Maintenance
+-----------
+- Delay the import of ``pint`` so that sessions with no unit conversions can
+  start up 2 seconds faster.
+
+Contributors
+------------
+- mbosum
+- vespos
+- wwright-slac
+- zllentz
+
+
+v6.2.0 (2022-06-20)
+===================
+
+Device Updates
+--------------
+- Add IMS.setup_pmgr as a public API for applications that want to initialize
+  pmgr support before the first device uses it. This was previously private
+  API at IMS._setup_pmgr.
+- Added LED control PVs to CVMI motion class.
+
+New Devices
+-----------
+- Added ItechRfof class: Instrumentation Technologies RF over Fiber unit
+
+Bugfixes
+--------
+- Create the pmgr resources when they are first used rather than on IMS
+  init, saving 3 seconds of startup time for users that don't need
+  pmgr resources.
+
+Maintenance
+-----------
+- Vendor happi.device.Device as LegacyItem instead of importing it, pending
+  deprecation of the happi.device module.
+
+Contributors
+------------
+- Mbosum
+- mcb64
+- slactjohnson
+- wwright-slac
+- zllentz
+
+
+v6.1.0 (2022-06-03)
+===================
+
+Device Updates
+--------------
+- Updated the Laser Beam Transport Protection system configuration to
+  reflect the latest PLC/IOC changes: the image sum from near and
+  far-field cameras is now used instead of centroid positioning.
+  The relevant screens have been updated as well.
+- Added an optional ``acr_status_suffix`` argument to ``BeamEnergyRequest`` that
+  instantiates an alternate version of the class that waits on an ACR PV to
+  know when the motion is done. This is a more suitable version of the class
+  for step scans and a less suitable version of the class for fly scans.
+
+New Devices
+-----------
+- Added ``KBOMirrorHEStates`` - a class for KBO mirrors with coating states
+  and cooling.
+- Added ``KBOMirrorStates`` - a class for KBO mirrors with coating states
+  and no cooling.
+
+Bugfixes
+--------
+- Fixed the ``Stopper`` ``happi`` container definition.
+- Removed unusable ``bunch_charge_2`` signal from LCLS beam stats. This PV seems
+  to contain a stale value that disagrees with ``bunch_charge`` and causes EPICS
+  errors on certain hosts.
+
+Maintenance
+-----------
+- Added a run constraint for pyqt to avoid latest while we work out testing
+  failures.
+
+Contributors
+------------
+- klauer
+- nrwslac
+- tangkong
+- zllentz
+
+
+v6.0.0 (2022-05-03)
+===================
+
+API Changes
+-----------
+- ``MultiDerivedSignal`` and ``MultiDerivedSignalRO`` calculation functions
+  (``calculate_on_get`` and ``calculate_on_put``) now take new signatures.
+  Calculation functions may be either methods on an ``ophyd.Device`` (with
+  ``self``) or standalone functions with the following signature:
+  .. code::
+    calculate_on_get(mds: MultiDerivedSignal, items: SignalToValue) -> OphydDataType
+    calculate_on_put(mds: MultiDerivedSignal, value: OphydDataType) -> SignalToValue
+
+Features
+--------
+- adds ``.screen()`` method to BaseInterface, which opens a typhos screen
+- adds AreaDetector specific ``.screen()`` method, which calls camViewer
+- Add utilities for rearranging the order of components as seen by typhos.
+  This can be helpful for classes that inherit components from other classes
+  if they want to slot their new components in at specific places in the
+  automatic typhos tree.
+
+Device Updates
+--------------
+- Added "ref" signal to "BeamEnergyRequest" to track the energy
+  reference PV.
+- ``TwinCATStatePositioner`` has been updated due to underlying
+  ``MultiDerivedSignal`` API changes.
+- TM1K4 now has its own class with 8 position states (7 targets and and OUT state)
+- Updated AT2L0 to utilize newly implemented MultiderivedSignal for error checking and clearing in GUI and at the command line
+- Updated AT2L0 Typhos GUI, includes error clearing button and display of error on individual blades
+- clear_errors() method for AT2L0 to clear errors; e.g. at2l0.clear_errors()
+- print_errors() method for AT2l0 to print error summary; e.g. at2l0.print_errors()
+
+New Devices
+-----------
+- New ``JJSlits`` class and typhos screen for controlling JJSlits model AT-C8-HV with Beckhoff controls.
+- XOffsetMirrorRTDs, offset mirrors with RTDs for measuring temperatures.
+- FFMirrorZ, an extension to FFMirror to add a Z axis.
+- The X apertures for AT1K0 now have their own device with 1 state, "centered"
+- The Y apertures for AT1K0 now have their own device with 4 states, ["5.5mm","8mm","10mm","13mm"]
+- OpticsPitchNotepad - a class for storing pitch positions based on state in a notepad IOC
+  for mr1l0, mr2l0, mr1l4, mr1l3, and mr2l3.
+
+Bugfixes
+--------
+- Fix calls to ipm_screen.
+- Fix an issue where Beckhoff motion error reset signals could not be set twice in the same session.
+- Fix an issue where the TMO Spectrometer and the HXRSSS would spam errors
+  when loaded in lightpath.
+
+Maintenance
+-----------
+- Ran pre-commit on all files in the repository, except the ones where it
+  causes issues. Update the CI to require these checks to pass. (passive
+  update, this is the new pcds-ci-helpers master). Notable changes were
+  related to import sorting and removal of trailing whitespace.
+
+Contributors
+------------
+- klauer
+- mbosum
+- mkestra
+- nrwslac
+- rsmm97
+- tangkong
+- zllentz
+
+
+v5.2.0 (2022-03-31)
+===================
+
+Features
+--------
+- Added a post_elog_status method to the ``BaseInterface`` class, which posts to the registered primary elog if it exists.
+- Added a function for posting ophyd object status (and lists of objects) to the ELog as html.
+- Added new ``AggregateSignal`` variant ``MultiDerivedSignal``.  With a list of
+  signal names and a calculation function, it is now possible to create a new
+  signal derived from the values of the provided signals. For example, if a
+  hutch has many temperature sensors - each with their own corresponding
+  ``EpicsSignal`` instance - a signal that shows the maximum value from all of
+  those temperatures would be easy to implement.
+- Added the scale keyword argument to tweak() method, allowing the user to pick the initial step size.
+
+Device Updates
+--------------
+- Added the Y axis to the ``KBOMirror`` status printout
+- TwinCAT state devices now have a top-level "state_velo" summary signal.
+  This can be used to view the highest speed of all the configured state
+  speeds, and it can also be used to do a bulk edit. These are stored per
+  state destination in the IOC.
+- Added a biological parent attribute to ``GroupDevice``, for tracking parents without alerting stage() methods
+- Added the current monitoring PV to ``pcdsdevices.pump.PTMPLC``.
+- Allow for user offsets to TMO Spectrometer motors.
+- Commented out the GasNeedleTheta motor for 3/22 LAMPMBES configuration.
+
+New Devices
+-----------
+- Added ``PCDSHDF5BlueskyTriggerable``, a variant of area detector
+  specialized for doing ``bluesky`` scans.
+- Added the ``KBOMirrorHE`` class to be used with KBO mirrors with cooling, like MR2K4.
+- Added the laser beam transport protection system device classes and related
+  screens.
+- Added the Dg /DelayGenerator class to handle SRS645 delay generator
+- Added the ``MMC100`` class, for motors controlled by Micronix MMC100 controllers
+- Added a class for the HXR Single Shot Spectrometer.
+- Add ``VRCDA``, a dual-acting valve class.
+
+Bugfixes
+--------
+- Fixed an issue in sim.slow_motor classes where threading behavior could fail.
+- State readbacks from preset positions are now correct.
+- Fixed a race condition on initialization of new ``EpicsSignalEditMD`` and
+  ``EpicsSignalROEditMD``. (#963, #978)
+- Fix an issue where mirror devices had overfiltered tab completion results.
+
+Maintenance
+-----------
+- Removed the instantiation of a status object at motor startup to help
+  improve the performance of loading large sessions. This object was not
+  strictly needed.
+- Removed the deprecation warning from ``pcdsdevices.utils`` import.
+- Updated the docstrings in the valve submodule with detailed descriptions.
+
+Contributors
+------------
+- klauer
+- mbosum
+- nrwslac
+- spenc333
+- vespos
+- tangkong
+- zrylettc
+- zllentz
+
+
 v5.1.0 (2022-02-07)
 ===================
 

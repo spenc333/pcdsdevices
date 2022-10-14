@@ -1,19 +1,28 @@
 from __future__ import annotations
 
 import enum
+import inspect
+import logging
 import operator
-import os
 import select
 import shutil
+import subprocess
 import sys
 import threading
 import time
+from collections.abc import Iterable
 from functools import reduce
-from typing import Iterator, Union
+from types import MethodType
+from typing import Callable, Dict, Iterator, List, Optional, Union
 
 import ophyd
-import pint
 import prettytable
+from ophyd.device import Component as Cpt
+from ophyd.device import Device
+from ophyd.ophydobj import Kind
+
+from ._html import collapse_list_head, collapse_list_tail
+from .type_hints import Number, OphydDataType
 
 try:
     import termios
@@ -22,6 +31,7 @@ except ImportError:
     tty = None
     termios = None
 
+logger = logging.getLogger(__name__)
 
 arrow_up = '\x1b[A'
 arrow_down = '\x1b[B'
@@ -121,6 +131,7 @@ def convert_unit(value, unit, new_unit):
 
     global ureg
     if ureg is None:
+        import pint
         ureg = pint.UnitRegistry()
 
     expr = ureg.parse_expression(unit)
@@ -152,8 +163,11 @@ def ipm_screen(dettype, prefix, prefix_ioc):
     if shutil.which(executable) is None:
         raise EnvironmentError('%s is not on path, we cannot start the screen'
                                % executable)
-    os.system('%s --base %s --ioc %s --evr %s &' %
-              (executable, prefix, prefix_ioc, prefix+':TRIG'))
+
+    logger.info(f'Opening {dettype} screen for {prefix}...')
+    arglist = [executable, '--base', prefix, '--ioc', prefix_ioc,
+               '--evr', prefix+':TRIG']
+    _ = subprocess.Popen(arglist)
 
 
 def get_component(obj):
@@ -454,3 +468,467 @@ class HelpfulIntEnum(enum.IntEnum, metaclass=HelpfulIntEnumMeta):
             with the input identifiers.
         """
         return set(cls.__members__.values()) - cls.include(identifiers)
+
+
+def set_many(
+    to_set: Dict[ophyd.Signal, OphydDataType],
+    *,
+    owner: Optional[ophyd.ophydobj.OphydObject] = None,
+    timeout: Optional[Number] = None,
+    settle_time: Optional[Number] = None,
+    raise_on_set_failure: bool = False
+) -> ophyd.status.StatusBase:
+    """
+    Call ``set`` on all given signal-to-value pairs with a single Status
+    return value.
+
+    Parameters
+    ----------
+    to_set : Dict[ophyd.Signal, OphydDataType]
+        Dictionary of Signal to data to ``set``.
+
+    owner : OphydObject, optional
+        The owner object, to be used for logging / Status object attribution.
+
+    timeout : float, optional
+        Per-signal timeout to configure during set.
+
+    settle_time : float, optional
+        Per-signal settle time to configure during set.
+
+    raise_on_set_failure : bool, optional
+        Raise if any of the ``set`` calls fail.
+
+    Returns
+    -------
+    status : ophyd.Status.StatusBase
+        One Status or AndStatus instance that reflects the completion status of
+        the setting all signal to the provided values.
+    """
+    statuses = []
+    log = owner.log if owner is not None else logger
+    for signal, value in to_set.items():
+        try:
+            st = signal.set(
+                value, timeout=timeout, settle_time=settle_time
+            )
+        except Exception:
+            log.exception(
+                "Failed to set %s to %s", signal.name, value
+            )
+            if raise_on_set_failure:
+                raise
+        else:
+            statuses.append(st)
+
+    if not statuses:
+        st = ophyd.status.Status(obj=owner)
+        st.set_finished()
+        return st
+
+    status = statuses[0]
+    for st in statuses[1:]:
+        status = ophyd.status.AndStatus(status, st)
+    return status
+
+
+def maybe_make_method(
+    func: Optional[Callable], owner: object
+) -> Optional[Callable]:
+    """
+    Bind ``func`` as a method of ``owner`` if ``self`` is the first parameter.
+
+    Additionally, this accepts ``None`` and passes it through.
+
+    Parameters
+    ----------
+    func : callable or None
+        The function to optionally wrap.
+
+    owner : object
+        The owner class instance to optionally bind ``func`` to.
+
+    Returns
+    -------
+    maybe_method : callable or None
+        A callable function or method, depending on the signature of ``func``.
+    """
+    if func is None:
+        return None
+
+    if not callable(func):
+        raise ValueError(
+            f"The provided ``func`` is not callable: {func!r} is of "
+            f"type {type(func).__name__}"
+        )
+
+    sig = inspect.signature(func)
+    if "self" in sig.parameters and list(sig.parameters)[0] == "self":
+        return MethodType(func, owner)
+    return func
+
+
+def format_ophyds_to_html(obj, allow_child=False):
+    """
+    Recursively construct html that contains the output from .status() for
+    each object provided.  Base case is being passed a single ophyd object
+    with a `.status()` method.  Any object without a `.status()` method is
+    ignored.
+
+    Creates divs and buttons based on styling
+    from `nabs._html.collapse_list_head` and `nabs._html.collapse_list_tail`
+
+    Parameters
+    ----------
+    obj : ophyd object or Iterable of ophyd objects
+        Objects to format into html
+
+    allow_child : bool, optional
+        Whether or not to post child devices to the elog.  Defaults to False,
+        to keep long lists of devices concise
+
+    Returns
+    -------
+    out : string
+        html body containing ophyd object representations (sans styling, JS)
+    """
+    if isinstance(obj, Iterable):
+        content = ""
+
+        for o in obj:
+            content += format_ophyds_to_html(o, allow_child=allow_child)
+
+        # Don't return wrapping if there's no content
+        if content == "":
+            return content
+
+        # HelpfulNamespaces tend to lack names, maybe they won't some day
+        parent_default = ('Ophyd status: ' +
+                          ', '.join('[...]' if isinstance(o, Iterable)
+                                    else o.name for o in obj))
+        parent_name = getattr(obj, '__name__', parent_default[:60] + ' ...')
+
+        # Wrap in a parent div
+        out = (
+            "<button class='collapsible'>" +
+            f"{parent_name}" +  # should be a namespace name
+            "</button><div class='parent'>" +
+            content +
+            "</div>"
+        )
+        return out
+
+    # check if parent level ophyd object
+    elif (callable(getattr(obj, 'status', None)) and
+            ((getattr(obj, 'parent', None) is None and
+              getattr(obj, 'biological_parent', None) is None) or
+             allow_child)):
+        content = ""
+        try:
+            content = (
+                f"<button class='collapsible'>{obj.name}</button>" +
+                f"<div class='child content'><pre>{obj.status()}</pre></div>"
+            )
+        except Exception as ex:
+            logger.info(f'skipped {str(obj)}, due to Exception: {ex}')
+
+        return content
+
+    # fallback base case (if ignoring obj)
+    else:
+        return ""
+
+
+def post_ophyds_to_elog(objs, allow_child=False, hutch_elog=None):
+    """
+    Take a list of ophyd objects and post their status representations
+    to the elog.  Handles singular objects, lists of objects, and
+    HelpfulNamespace's provided in hutch-python
+
+    .. code-block:: python
+
+        # pass in an object
+        post_ophyds_to_elog(at2l0)
+
+        # or a list of objects
+        post_ophyds_to_elog([at2l0, im3l0])
+
+        # devices with no parents are ignored by default :(
+        post_ophyds_to_elog([at2l0, at2l0.blade_01], allow_child=True)
+
+        # or a HelpfulNamespace
+        post_ophyds_to_elog(m)
+
+    Parameters
+    ----------
+    objs : ophyd object or Iterable of ophyd objects
+        Objects to format and post
+
+    allow_child : bool, optional
+        Whether or not to post child devices to the elog.  Defaults to False,
+        to keep long lists of devices concise
+
+    hutch_elog : HutchELog, optional
+        ELog instance to post to.  If not provided, will attempt to grab
+        primary registered ELog instance
+    """
+    if hutch_elog is None:
+        try:
+            from elog.utils import get_primary_elog
+            hutch_elog = get_primary_elog()
+        except ValueError:
+            logger.info('elog module exists, but no elog registered')
+            return
+    else:
+        logger.info('Posting to provided elog')
+
+    post = format_ophyds_to_html(objs, allow_child=allow_child)
+
+    if post == "":
+        logger.info("No valid devices found, no post submitted")
+        return
+
+    # wrap post in head and tail
+    final_post = collapse_list_head + post + collapse_list_tail
+
+    hutch_elog.post(final_post, tags=['ophyd_status'],
+                    title='ophyd status report')
+
+
+def reorder_components(
+    cls: Optional[type[Device]] = None,
+    start_with: Optional[List[Union[str, Cpt]]] = None,
+    end_with: Optional[List[Union[str, Cpt]]] = None,
+) -> Union[type[Device], Callable[[type[Device]], type[Device]]]:
+    """
+    Rearrange the components in cls for typhos displays.
+
+    Internally, this works by switching around the keys in the _sig_attrs
+    OrderedDict.
+
+    Parameters
+    ----------
+    cls : Device subclass
+        The Device subclass that we'd like to rearrange the order of.
+    start_with : list of str, optional
+        The component names to bring to the top of the screen.
+    end_with : list of str, optional
+        The component names to bring to the bottom of the screen.
+
+    Returns
+    -------
+    cls : Device subclass, or function that returns it
+        Decorator-compatible output. When used as a function or as a
+        no-argument decorator, this will return the input device.
+        When used as a decorator with the reverse argument, this will
+        return a function as required by the decorator interface.
+    """
+    # Special decorator handling
+    def inner(cls: type[Device]) -> type[Device]:
+        start_norm = _normalize_reorder_list(cls, start_with)
+        end_norm = _normalize_reorder_list(cls, end_with)
+        for cpt_name in reversed(start_norm):
+            cls._sig_attrs.move_to_end(cpt_name, last=False)
+        for cpt_name in end_norm:
+            cls._sig_attrs.move_to_end(cpt_name, last=True)
+        return cls
+
+    if cls is not None:
+        # For function call or no-args decorator
+        return inner(cls)
+    # For decorator with args
+    return inner
+
+
+def _normalize_reorder_list(
+    cls: type[Device],
+    cpts_or_names: Optional[List[Union[str, Cpt]]],
+) -> List[str]:
+    """
+    Simplify the user's variable arguments for the component reordering.
+    """
+    if cpts_or_names is None:
+        return []
+    reverse_map = {cpt: name for name, cpt in cls._sig_attrs.items()}
+    output = []
+    for obj in cpts_or_names:
+        if isinstance(obj, Cpt):
+            try:
+                output.append(reverse_map[obj])
+            except KeyError as exc:
+                raise ValueError(
+                    f'Received component {obj}, which is not from the device '
+                    f'class {cls}. We have components with the following '
+                    f'names: {", ".join(cls._sig_attrs)}'
+                ) from exc
+        elif isinstance(obj, str):
+            output.append(obj)
+        else:
+            raise TypeError(
+                f'Received object {obj}, which is not a str or Component.'
+            )
+    return output
+
+
+def move_subdevices_to_start(
+    cls: Optional[type[Device]] = None,
+    subdevice_cls: type[Device] = Device,
+) -> Union[type[Device], Callable[[type[Device]], type[Device]]]:
+    """
+    Arrange the component order of a device class to put subdevices first.
+
+    This can be useful to bring e.g. all the motors to the top for the
+    typhos screen.
+
+    The relative ordering of subdevices is preserved.
+
+    Parameters
+    ----------
+    cls : Device subclass
+        The Device subclass that we'd like to rearrange the order of.
+    subdevice_cls: type, optional
+        A specific class type to move to the front. If omitted, all device
+        subclasses will be moved.
+
+    Returns
+    -------
+    cls : Device subclass, or function that returns it
+        Decorator-compatible output. When used as a function or as a
+        no-argument decorator, this will return the input device.
+        When used as a decorator with the subdevice_cls argument, this will
+        return a function as required by the decorator interface.
+    """
+    # Special decorator handling
+    def inner(cls: type[Device]) -> type[Device]:
+        device_names = []
+        for name, cpt in cls._sig_attrs.items():
+            if issubclass(cpt.cls, subdevice_cls):
+                device_names.append(name)
+        reorder_components(cls, start_with=device_names)
+        return cls
+
+    if cls is not None:
+        # For function call or no-args decorator
+        return inner(cls)
+    # For decorator with args
+    return inner
+
+
+def sort_components_by_name(
+    cls: Optional[type[Device]] = None,
+    reverse: bool = False,
+) -> Union[type[Device], Callable[[type[Device]], type[Device]]]:
+    """
+    Arrange the component order of a device class in alphabetical order.
+
+    This can be useful as a first step before bringing specific components
+    to the top of the queue for the typhos screen.
+
+    Parameters
+    ----------
+    cls : Device subclass
+        The Device subclass that we'd like to rearrange the order of.
+    reverse : bool, optional
+        Set to True to sort in descending order instead.
+
+    Returns
+    -------
+    cls : Device subclass, or function that returns it
+        Decorator-compatible output. When used as a function or as a
+        no-argument decorator, this will return the input device.
+        When used as a decorator with the reverse argument, this will
+        return a function as required by the decorator interface.
+    """
+    # Special decorator handling
+    def inner(cls: type[Device]) -> type[Device]:
+        alphabetical = list(sorted(cls._sig_attrs, reverse=reverse))
+        reorder_components(cls, start_with=alphabetical)
+        return cls
+
+    if cls is not None:
+        # For function call or no-args decorator
+        return inner(cls)
+    # For decorator with args
+    return inner
+
+
+def sort_components_by_kind(cls: type[Device]) -> type[Device]:
+    """
+    Arrange the component order of a device class in kind order.
+
+    Kind order is hinted > normal > config > omitted.
+
+    This can be useful because typically the higher kind classes
+    are more important, and therefore should be higher up on the
+    typhos screen.
+
+    The relative ordering of subdevices within a kind is preserved.
+
+    This function makes no attempt to disambiguate or sort
+    combination kinds. For example:
+
+    - "hinted | config" counts as "hinted"
+    - "normal | config" counts as "normal"
+
+    Parameters
+    ----------
+    cls : Device subclass
+        The Device subclass that we'd like to rearrange the order of.
+
+    Returns
+    -------
+    cls : Device subclass
+        The same class from the input, mutated. This is returned so that
+        sort_components_by_kind can be used as a class decorator.
+    """
+    hinted = []
+    normal = []
+    config = []
+    omitted = []
+    for name, cpt in cls._sig_attrs.items():
+        if check_kind_flag(cpt.kind, Kind.hinted):
+            hinted.append(name)
+        elif check_kind_flag(cpt.kind, Kind.normal):
+            normal.append(name)
+        elif check_kind_flag(cpt.kind, Kind.config):
+            config.append(name)
+        else:
+            omitted.append(name)
+    reorder_components(cls, end_with=hinted)
+    reorder_components(cls, end_with=normal)
+    reorder_components(cls, end_with=config)
+    reorder_components(cls, end_with=omitted)
+    return cls
+
+
+def check_kind_flag(kind: int, flag: Kind) -> bool:
+    """Return True if kind contains flag."""
+    return kind & flag == flag
+
+
+def set_standard_ordering(cls: type[Device]) -> type[Device]:
+    """
+    Set a sensible "standard" ordering for use in typhos.
+
+    This ordering is:
+    - Devices first, then signals
+    - Within the above, kind order
+    - Within a kind, alphabetical order
+
+    This is not universally applicable and is just a suggested starting point.
+
+    Parameters
+    ----------
+    cls : Device subclass
+        The Device subclass that we'd like to rearrange the order of.
+
+    Returns
+    -------
+    cls : Device subclass
+        The same class from the input, mutated. This is returned so that
+        set_standard_ordering can be used as a class decorator.
+    """
+    sort_components_by_name(cls)
+    sort_components_by_kind(cls)
+    move_subdevices_to_start(cls)
+    return cls
