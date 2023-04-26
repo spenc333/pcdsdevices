@@ -1,24 +1,27 @@
 #!/usr/bin/python
 
-import numpy as np
-from numpy import rad2deg, arcsin, sqrt, tan
-import sys
-from .interface import BaseInterface
-from ophyd import Component as Cpt
-from .device import GroupDevice
-from pcdsdevices.epics_motor import IMS
-from ophyd.signal import EpicsSignal, EpicsSignalRO
-from pcdsdevices.pseudopos import PseudoSingleInterface
-from pcdsdevices.positioner import FuncPositioner
+import logging
 
-alpha_r = 63 * np.pi/180 #rail angle
-r = 2960.0 #first rail distance from sample to rail rod at 27deg
+import numpy as np
+from ophyd import Component as Cpt
+from ophyd.signal import EpicsSignal
+from prettytable import PrettyTable
+
+from pcdsdevices.epics_motor import IMS
+
+from .device import GroupDevice
+from .interface import BaseInterface
+
+logger = logging.getLogger(__name__)
+
+alpha_r = 63 * np.pi/180  # rail angle
+r = 2960.0  # first rail distance from sample to rail rod at 27deg
 R = 6735.0
 alpha_cos = np.cos(27 * np.pi/180)
 
 
 def ThetaToMotors(theta, samz_offset=0):
-    theta = theta * np.pi/180 #change to radian
+    theta = theta * np.pi/180  # change to radian
     x1 = (r) * np.sin(theta)/(np.sin(alpha_r) * np.sin(alpha_r+theta))
     x2 = (R) * np.sin(theta)/(np.sin(alpha_r) * np.sin(alpha_r+theta))
     dz = (r)/np.sin(alpha_r)-x1 * np.sin(alpha_r)/np.sin(theta)
@@ -48,13 +51,15 @@ def GammaToMotors(gamma):
 
 
 def x1ToTheta(x1, samz_offset=0):
-    theta = np.arctan(x1 * (np.sin(alpha_r))**2/(r-samz_offset * alpha_cos-x1 * np.sin(2 * alpha_r)/2))
+    theta = np.arctan(x1 * (np.sin(alpha_r))**2 /
+                      (r-samz_offset * alpha_cos-x1 * np.sin(2 * alpha_r)/2))
     theta = theta * 180/np.pi
     return theta
 
 
 def x2ToTheta(x2, samz_offset=0):
-    theta = np.arctan(x2 * (np.sin(alpha_r))**2/(R-samz_offset * alpha_cos-x2 * np.sin(2 * alpha_r)/2))
+    theta = np.arctan(x2 * (np.sin(alpha_r))**2 /
+                      (R-samz_offset * alpha_cos-x2 * np.sin(2 * alpha_r)/2))
     theta = theta * 180/np.pi
     return theta
 
@@ -78,104 +83,147 @@ def MotorsTox(x1, x2, z):
 
 def ThetaToMotors_print(theta):
     x1, x2, z = ThetaToMotors(theta)
-    print("Move x1 to %+.4f" % x1)
-    print("Move x2 to %+.4f" % x1)
-    print("Move z to %+.4f" % z)
+    print(
+           f"Move x1 to {x1}"
+           f"Move x2 to {x2}"
+           f"Move z to {z}"
+          )
 
 
 class LADM(BaseInterface, GroupDevice):
     """
     Class to control the LADM. Includes Single motors and beamstops.
-    
+
     Parameters
     ----------
     prefix : str
         Base PV for the LADM
 
     name : str
-        Alias for the device   
+        Alias for the device
     """
-    tab_component_names = True
-    
-    #Motors
-    x1_us = Cpt(IMS, ':MMS:01', kind='normal') #X1 Upstream
-    x2_ds = Cpt(IMS, ':MMS:04', kind='normal') #X2 Downstream
-    y1_us = Cpt(IMS, ':MMS:03', kind='normal') #Y1 Upstream
-    y2_ds = Cpt(IMS, ':MMS:05', kind='normal') #Y2 Dowstream
-    z_us  = Cpt(IMS, ':MMS:02', kind='normal')  #Z Upstream
-    bs_6_r = Cpt(IMS, ':MMS:12', kind='normal')
-    bs_6_t = Cpt(IMS, ':MMS:11', kind='normal')
-    bs_2_r = Cpt(IMS, ':MMS:13', kind='normal')
-    bs_2_t = Cpt(IMS, ':MMS:14', kind='normal')
-    bs_10_r = Cpt(IMS, ':MMS:15', kind='normal')
-    bs_10_t = Cpt(IMS, ':MMS:16', kind='normal')
 
-    theta_pv = EpicsSignal('XCS:VARS:LAM:Theta', name = 'LADM_theta')
+    # Motors
+    x1 = Cpt(IMS, ':MMS:01', name="x1", kind='normal',
+             doc='X1 Upstream')
+    x2 = Cpt(IMS, ':MMS:04', name="x2", kind='normal',
+             doc='X2 Downstream')
+    y1 = Cpt(IMS, ':MMS:03', name="y1", kind='normal',
+             doc='Y1 Upstream')
+    y2 = Cpt(IMS, ':MMS:05', name="y2", kind='normal',
+             doc='Y2 Downstream')
+    z = Cpt(IMS, ':MMS:02', name="z", kind='normal',
+            doc='Z Upstream')
+    bs6_r = Cpt(IMS, ':MMS:12', name="bs6_r",  kind='normal',
+                doc='Beam Stop In Out 1')
+    bs6_t = Cpt(IMS, ':MMS:11', name="bs6_t", kind='normal',
+                doc='Beam Stop Trans 1')
+    bs2_r = Cpt(IMS, ':MMS:13', name="bs2_r", kind='normal',
+                doc='Beam Stop In Out 2')
+    bs2_t = Cpt(IMS, ':MMS:14', name="bs2_t", kind='normal',
+                doc='Beam Stop Trans 2')
+    bs10_r = Cpt(IMS, ':MMS:15', name="bs10_r", kind='normal',
+                 doc='Beam Stop In Out 3')
+    bs10_t = Cpt(IMS, ':MMS:16', name="bs10_t", kind='normal',
+                 doc='Beam Stop Trans 2')
+
+    theta_pv = EpicsSignal('XCS:VARS:LAM:Theta', name='LADM_theta')
     gamma_pv = EpicsSignal('XCS:VARS:LAM:Gamma', name='LADM_gamma')
-    motors = {
-                "x1": x1_us,
-                "y1": y1_us,
-                "x2": x2_ds,
-                "z": z_us
-             }
+
+    tab_component_names = True
+    tab_whitelist = ['status', 'ThetaToMotors_print',
+                     'moveTheta', 'waitAll', 'wmTheta',
+                     'wmGamma', 'mvrGamma', 'setTheta',
+                     'moveX', 'tweakH', 'mvrV', 'wmX',
+                     'ca_theta', 'stop'
+                     ]
 
     def __init__(self, *args, **kwargs):
-
-        self.theta = None #VirtualMotor
-        self.XT = None #VirtualMotor
+        super().__init__(*args, **kwargs)
+        self.theta = None  # VirtualMotor
+        self.XT = None  # VirtualMotor
         self.gamma = None
         self.__lowlimX = None
         self.__hilimX = None
-        super().__init__(*args, **kwargs)
-
 
     def __theta_movement(self, theta, samz_offset=0):
-        x1, x2, z = ThetaToMotors(theta, samz_offset)
-        z_now = z_us.wm()
+        x1_var, x2_var, z_var = ThetaToMotors(theta, samz_offset)
+        z_now = self.z.wm()
         try:
-            if z_now < z:
-                print("Moving z to %+4.f" % z)
-                z_us.mv(z)
-                z_us.wait()
-                print("Moving x1 to to %+4.f and x2 to %.4f\n" % (x1, x2))
-                x1_us.mv(x1); x2_us.mv(x2)
+            if z_now < z_var:
+                print(f"Moving z to {z_var}")
+                self.z.mv(z_var)
+                self.z.wait()
+                print("Done")
+                print(f"Moving x1 to {x1_var} and x2 to {x2_var}")
+                self.x1.mv(x1_var)
+                self.x2.mv(x2_var)
                 self.waitAll()
+                print("Done")
             else:
-                print("Moving x1 to %+4.f and x2 to %.4f\n" % (x1, x2))
+                print(f"Moving x1 to {x1_var} and x2 to {x2_var}")
+                self.x1.mv(x1_var)
+                self.x2.mv(x2_var)
+                self.x1.wait()
+                self.x2.wait()
+                print(f"moving z to {z_var}")
+                self.z.mv(z_var)
+                self.waitAll()
+                print("Done")
         except KeyboardInterrupt:
             self.stop()
         finally:
-            theta_pv.put(self.wmTheta())
+            self.theta_pv.put(self.wmTheta())
 
     def status(self):
-        str = "**LADM Status**\n "
-        str += "\t%10s\t%10s\t%10s\n" % ("Motor", "User", "Dial")
-        str += "\t%10s\t%+10.4f\t%+10.4s\n" % ("theta", self.theta.wm(), "-")
-        str += "\t%10s\t%+10.4f\t%+10.4s\n" % ("XT", self.XT.wm(), "-")
-        #keys = self.motors.keys()
-        #keys.sorted()
-        for key,value in motors.items():
+        motors = {
+                  "x1": self.x1,
+                  "y1": self.y1,
+                  "x2": self.x2,
+                  "y2": self.y2,
+                  "z": self.z
+                 }
+        table = PrettyTable()
+        table.field_names = ["Motor", "User", "Dial"]
+        table.add_row(["Theta", self.theta.position, "-"])
+        table.add_row(["XT", self.XT.position, "-"])
+        for key, value in motors.items():
             m = motors[key]
-            str += "\t%10s\t%+10.4f\t%+10.4f\n" % (key, m.wm(), m.dial_position.get())
-        print(str)
+            table.add_row([key, m.wm(), m.dial_position.get()])
+        print(table.get_string(title="LADM Status"))
+        print(table)
 
     def ThetaToMotors_print(self, theta):
-        x1, x2, z = ThetaToMotors(theta)
-        print("move x1 to %+.4f" % x1)
-        print("move x2 to %+.4f" % x2)
-        print("move  z to %+.4f" % z)
+        x1_var, x2_var, z_var = ThetaToMotors(theta)
+        message = (f"""
+                   Move x1 to {x1_var}.
+                   Move x2 to {x2_var}.
+                   Move z to {z_var}.
+                   """
+                   )
+        print(message)
+#        print("move x1 to %+.4f" % x1_var)
+#        print("move x2 to %+.4f" % x2_var)
+#        print("move  z to %+.4f" % z_var)
 
     def moveTheta(self, theta, samz_offset=0):
-        theta_now = self.theta.wm()
+        theta_now = self.theta.position()
         if theta_now is np.nan:
-            theta1 = x1ToTheta(x1_us.wm(), samz_offset)
-            theta2 = x2ToTheta(x2_ds.wm(), samz_offset)
+            theta1 = x1ToTheta(self.x1.wm(), samz_offset)
+            theta2 = x2ToTheta(self.x2.wm(), samz_offset)
             x1_th1, x2_th1, z_th1 = ThetaToMotors(theta1)
             x1_th2, x2_th2, z_th2 = ThetaToMotors(theta2)
-            str = ("theta(x1)= %.4f \n  Should move x2 to %.4f \n  Should move z to %.4f\n" % (theta1, x2_th1, z_th1))
-            str += ("theta(x2)= %.4f \n  Should move x1 to %.4f \n  Should move z to %.4f\n\n" % (theta2, x1_th2, z_th2))
-            str += self.status()
-            print(str)
+            message = (f"""
+                       theta(x1) = {theta1}.
+                       Should move x2 to {x2_th1}.
+                       Should move z to {z_th1}.
+                       theta(x2)= {theta2}.
+                       Should move x1 to {x1_th2}.
+                       Should move z to {z_th2}
+                       """
+                       )
+            return message
+
         else:
             if abs(theta-theta_now) <= 28:
                 self.__theta_movement(theta, samz_offset)
@@ -184,114 +232,138 @@ class LADM(BaseInterface, GroupDevice):
                 self.__theta_movement(theta_1, samz_offset)
                 self.theta.wait()
                 self.__theta_movement(theta, samz_offset)
+        self.status()
 
     def waitAll(self):
-        z_us.wait(); x1_us.wait(); x2_ds.wait()
+        self.z.wait()
+        self.x1.wait()
+        self.x2.wait()
 
     def wmTheta(self, samz_offset=0):
-        theta1 = x1ToTheta(x1_us.wm(), samz_offset)
-        theta2 = x2ToTheta(x2_ds.wm(), samz_offset)
+        theta1 = x1ToTheta(self.x1.wm(), samz_offset)
+        theta2 = x2ToTheta(self.x2.wm(), samz_offset)
         tolerance = .01
         if samz_offset > 0:
-            thetar = np.arctan((x2_ds.wm() - x1_us.wm())/(R-r))
+            thetar = np.arctan((self.x2.wm() - self.x1.wm())/(R-r))
             theta = thetar * 180/np.pi
-            ca_samz_offset = -((x1_us.wm() * (np.sin(alpha_r))**2 / np.tan(thetar)) - r + x1_us.wm() * np.sin(2*alpha_r)/2)/alpha_cos
-            str = " %.4f (by x1) / %.4f (by x2) / sample z at %.4f  \n" % (theta1, theta2, samz_offset)
-            str += "or \n theta %.4f at sample z offset %.4f " % (theta, ca_samz_offset)
-            print(str)
+            ca_samz_offset = -((self.x1.wm() * (np.sin(alpha_r))**2 /
+                                np.tan(thetar)) - r + self.x1.wm() *
+                               np.sin(2*alpha_r)/2)/alpha_cos
+            message = (f"""
+                       {theta1}(by x1)/theta2(by x2)/sample z at {samz_offset}
+                       or
+                       theta {theta} at sample z offset {ca_samz_offset}
+                        """)
+            print(message)
+            return theta1, theta2, samz_offset, ca_samz_offset
         elif abs(theta1 - theta2) < tolerance:
             return theta1
         else:
             return np.nan
 
     def wmGamma(self):
-        gamma1 = y1ToGamma(y1_us.wm())
-        gamma2 = y1ToGamma(y2_ds.wm())
-        str = "gamma = %.4f (y1= %.4f / y2= %.4f)" % (gamma2-gamma1, y1_us.wm(), y2_ds.wm())
-        print(str)
+        gamma1 = y1ToGamma(self.y1.wm())
+        gamma2 = y1ToGamma(self.y2.wm())
+        gamma = gamma2-gamma1
+        message = f"gamma = {gamma}(y1 = {self.y1.wm()}/y2 = {self.y2.wm()})"
+        print(message)
+        return gamma, message
 
-    def mvrGamma(self):
-        y1, y2 = GammaToMotors(theta)
-        gamma1 = y1ToGamma(y1_us.wm())
-        gamma2 = y1ToGamma(y2_ds.wm())
-        y1_us.mvr(y1)
-        y2_ds.mvr(y2)
+    def mvrGamma(self, theta, wait=False):
+        y1_var, y2_var, dy = GammaToMotors(theta)
+        # gamma1 = y1ToGamma(self.y1.wm())
+        # gamma2 = y1ToGamma(self.y2.wm())
+        self.y1.mvr(y1_var, wait=wait)
+        self.y2.mvr(y2_var, wait=wait)
 
     def setTheta(self, value):
-        """ set x1, x2 and  z for Theta value   """
-        x1, x2, z = ThetaToMotors(value)
-        x1_us.set(x1)
-        x2_ds.set(x2)
-        z_us.set(z)
+        """ set x1, x2 and  z for Theta value """
+        x1_var, x2_var, z_var = ThetaToMotors(value)
+        self.x1.set_current_position(x1_var)
+        self.x2.set_current_position(x2_var)
+        self.z.set_current_position(z_var)
 
-    def moveX(self,x):
-        """ whole ladm move horizontally and keep same Z distance from diff  """
+    def moveX(self, x):
+        """
+        whole ladm move horizontally and keep same Z distance from diff
+        """
         if ((x <= self.__lowlimX) or (x >= self.__hilimX)):
-            print("Asked to move %s outside limit, aborting" % (self.XT.name)) #need to study logprint and rewrite an alternative. Need to test functionality of .pvname in xcs3.
-
+            logger.debug(f"""Asked to move {self.XT.name}
+                           outside limit, aborting""")
         else:
             try:
-                x1 = xTox12(x)
-                x2 = xTox12(x)
-                z = xToz(x)
-                z_now = z_us.wm()
-                if z > z_now:
-                    print("Moving z to o %+4.f\n" % z)
-                    z_us.mv(z)
-                    z_us.wait()
-                    print("Moving x1 to %+4.f and x2 to %.4f\n" % (x1, x2))
-                    x1_us.mv(x1); x2_ds.mv(x2)
+                x1_var = xTox12(x)
+                x2_var = xTox12(x)
+                z_var = xToz(x)
+                z_now = self.z.wm()
+                if z_var > z_now:
+                    print(f"Moving z to o {z_var}")
+                    self.z.mv(z_var)
+                    self.z.wait()
+                    print(f"Moving x1 to {x1_var} and x2 to {x2_var}")
+                    self.x1.mv(x1_var)
+                    self.x2.mv(x2_var)
                 else:
-                    print("Moving x1 to %+4.f and x2 to %.4f\n" % (x1, x2))
-                    x1_us.mv(x1); x2_ds.mv(x2)
-                    x1_us.wait(); x2_ds.wait()
-                    print("Moving z to %+4.f\n" % z)
+                    print(f"Moving x1 to {x1_var} and x2 to {x2_var}")
+                    self.x1.mv(x1_var)
+                    self.x2.mv(x2_var)
+                    self.x1.wait()
+                    self.x2.wait()
+                    print(f"Moving z to {z_var}")
             except KeyboardInterrupt:
                 self.stop()
 
     def tweakH(self, x):
-        """ whole ladm move horizontally and keep same Z distance from diff  """
+        """
+        whole ladm move horizontally and keep same Z distance from diff
+        """
         try:
-            x1 = xTox12(x)
-            x2 = xTox12(x)
-            z = xToz(x)
-            z_now = z_us.wm()
-            if z > z_now:
-                print("Moving z to %+4.f\n" % z)
-                z_us.mvr(z - z_now)
-                z_us.wait()
-                print("Moving x1 to %+4.f and x2 to %.4f\n" % (x1, x2))
-                x1_us.mvr(x1); x2_ds.mvr(x2)
+            x1_var = xTox12(x)
+            x2_var = xTox12(x)
+            z_var = xToz(x)
+            z_now = self.z.wm()
+            if z_var > z_now:
+                print(f"Moving z to {z_var}")
+                self.z.mvr(z_var - z_now)
+                self.z.wait()
+                print("Done")
+                print(f"Moving x1 to {x1_var} and x2 to {x2_var}")
+                self.x1.mvr(x1_var)
+                self.x2.mvr(x2_var)
+                print("Done")
             else:
-                print("Moving x1 to %+4.f and x2 to %.4f\n" % (x1, x2))
-                x1.mvr(x1); x2_ds.mvr(x2)
-                x1_us.wait(); x2_ds.wait()
-                print("Moving z to %+4.f\n" % z)
-                z_us.mvr(z - z_now)
+                print(f"Moving x1 to {x1_var} and x2 to {x2_var}")
+                self.x1.mvr(x1_var)
+                self.x2.mvr(x2_var)
+                self.x1.wait()
+                self.x2.wait()
+                print("Done")
+                print(f"Moving z to {z_var}")
+                self.z.mvr(z_var - z_now)
+                print("Done")
         except KeyboardInterrupt:
             self.stop()
 
     def mvrV(self, y):
         """ ladm move vertically  """
         try:
-            y1_us.mvr(y)
-            y2_ds.mvr(y)
+            self.y1.mvr(y)
+            self.y2.mvr(y)
         except KeyboardInterrupt:
             self.stop()
 
     def wmX(self):
-        x1 = x1_us.wm()
-        x2 = x2_ds.wm()
-        z = z_us.wm()
-        x_x1, x_x2, x_z = MotorsTox(x1, x2, z)
-        print(x_x1, x_x2, x_z)
-        db_x1 = EpicsSignal(x1_us.prefix+'.RDBD', name='db_x1').get()
-        db_x2 = EpicsSignal(x2_ds.prefix+'.RDBD', name='db_x2').get()
+        x1_var = self.x1.wm()
+        x2_var = self.x2.wm()
+        z_var = self.z.wm()
+        x_x1, x_x2, x_z = MotorsTox(x1_var, x2_var, z_var)
+        db_x1 = EpicsSignal(self.x1.prefix+'.RDBD', name='db_x1').get()
+        db_x2 = EpicsSignal(self.x2.prefix+'.RDBD', name='db_x2').get()
         tolerance = db_x1 + db_x2
         if (abs(x_x1 - x_x2) <= tolerance):
             z_theo = xToz(x_x1)
-            db_z = EpicsSignal(z_us.prefix+'.RDBD', name='db_z').get()
-            if abs(z - z_theo) < 2 * db_z:
+            db_z = EpicsSignal(self.z.prefix+'.RDBD', name='db_z').get()
+            if abs(z_var - z_theo) < 2 * db_z:
                 return x_x1
             else:
                 return np.nan
@@ -299,26 +371,34 @@ class LADM(BaseInterface, GroupDevice):
             return np.nan
 
     def ca_theta(self, cal_theta, samz_offset=0):
-        """ calculation relative x and z postion at certain theta
-        ca_theta(theta,samz_offset(downstream offset / mm)) """
+        """
+        calculation relative x and z postion at certain theta
+        ca_theta(theta,samz_offset(downstream offset / mm))
+        """
         cal_thetarad = cal_theta * np.pi/180
-        cal_x1 = (r-samz_offset * alpha_cos) * np.sin(cal_thetarad)/(np.sin(alpha_r) * np.sin(alpha_r + cal_thetarad))
-        cal_x2 = (R - samz_offset * alpha_cos) * np.sin(cal_thetarad)/(np.sin(alpha_r) * np.sin(alpha_r + cal_thetarad))
-        cal_dz = (r - samz_offset * alpha_cos)/np.sin(alpha_r) - cal_x1 * np.sin(alpha_r)/np.sin(cal_thetarad)
-        str = "      theta     =     %3.2f \n "      % cal_theta
-        str += "      x1        =     %3.2f \n"       % cal_x1 
-        str += "      x2        =     %3.2f \n"       % cal_x2
-        str += "      delta z   =     %3.2f \n"       % cal_dz
-        str += "sample z offset =     %3.2f \n"       % samz_offset
-        print(str)
+        cal_x1 = ((r - samz_offset * alpha_cos) *
+                  np.sin(cal_thetarad) / (np.sin(alpha_r) *
+                  np.sin(alpha_r + cal_thetarad)))
+        cal_x2 = ((R - samz_offset * alpha_cos) *
+                  np.sin(cal_thetarad)/(np.sin(alpha_r) *
+                  np.sin(alpha_r + cal_thetarad)))
+        cal_dz = ((r - samz_offset * alpha_cos) /
+                  np.sin(alpha_r) - cal_x1 *
+                  np.sin(alpha_r)/np.sin(cal_thetarad))
+        caTable = PrettyTable()
+        caTable.field_names = ["Theta", "x1", "x2", "delta z",
+                               "sample z offset"]
+        caTable.add_row([cal_theta, cal_x1, cal_x2, cal_dz, samz_offset])
+        print(caTable)
+        return cal_theta, cal_x1, cal_x2, cal_dz, samz_offset
 
     def _setX(self, value):
-        x1 = xTox12(value)
-        x2 = xTox12(value)
-        z = xToz(value)
-        x1_us.set(x1)
-        x2_ds.set(x2)
-        z_us.set(z)
+        x1_var = xTox12(value)
+        x2_var = xTox12(value)
+        z_var = xToz(value)
+        self.x1.set_current_position(x1_var)
+        self.x2.set_current_position(x2_var)
+        self.z.set_current_position(z_var)
 
     def _set_lowlimX(self, value):
         self.__lowlimX = value
@@ -333,11 +413,11 @@ class LADM(BaseInterface, GroupDevice):
         return self.__hilimX
 
     def stop(self):
-        x1_us.stop()
-        x2_ds.stop()
-        y1_us.stop()
-        y2_ds.stop()
-        z_us.stop()
+        self.x1.stop()
+        self.x2.stop()
+        self.y1.stop()
+        self.y2.stop()
+        self.z.stop()
 
-    def __repr__(self):
-        return self.status()
+    def __call__(self):
+        self.status()
