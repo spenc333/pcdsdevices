@@ -202,9 +202,6 @@ class LADM(BaseInterface, GroupDevice):
                    """
                    )
         print(message)
-#        print("move x1 to %+.4f" % x1_var)
-#        print("move x2 to %+.4f" % x2_var)
-#        print("move  z to %+.4f" % z_var)
 
     def moveTheta(self, theta, samz_offset=0):
         theta_now = self.theta.position()
@@ -396,9 +393,9 @@ class LADM(BaseInterface, GroupDevice):
         x1_var = xTox12(value)
         x2_var = xTox12(value)
         z_var = xToz(value)
-        self.x1.set_current_position(x1_var)
-        self.x2.set_current_position(x2_var)
-        self.z.set_current_position(z_var)
+        self.x1.set(x1_var)
+        self.x2.set(x2_var)
+        self.z.set(z_var)
 
     def _set_lowlimX(self, value):
         self.__lowlimX = value
