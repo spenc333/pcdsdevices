@@ -144,3 +144,17 @@ def test_ca_theta(fakeLADM):
 #   assert cal_dz == ((r - samz_offset * alpha_cos)/np.sin(alpha_r) - cal_x1 *
 #   np.sin(alpha_r)/np.sin(cal_thetarad))
     assert samz_offset == 0
+
+
+def test_stop(fakeLADM):
+    ladm = fakeLADM
+    ladm.x1.stop()
+    assert ladm.x1.motor_spg.get() == 0
+    ladm.x2.stop()
+    assert ladm.x1.motor_spg.get() == 0
+    ladm.y1.stop()
+    assert ladm.x1.motor_spg.get() == 0
+    ladm.y2.stop()
+    assert ladm.x1.motor_spg.get() == 0
+    ladm.z.stop()
+    assert ladm.x1.motor_spg.get() == 0
